@@ -79,8 +79,8 @@ type window struct {
 	errStart int64
 	conseErr int64
 
-	abandonBucket bucket // abandon perPBucket
-	abandonTime   int64  // abandon time
+	oldBucket bucket // obsolete old buckets
+	oldTime   int64  // time of old bucket was eliminated
 }
 
 // newWindow .
@@ -145,11 +145,11 @@ func (w *window) Timeout() {
 
 // Counts count all successes, failures and timeouts
 func (w *window) Counts() (successes, failures, timeouts int64) {
-	bucketTime := w.bucketTime.Nanoseconds()
-	duration := bucketTime - (time.Now().UnixNano() - w.abandonTime)
-	oldSuccess := w.abandonBucket.Successes() * duration / bucketTime
-	oldFailure := w.abandonBucket.Failures() * duration / bucketTime
-	oldTimeout := w.abandonBucket.Timeouts() * duration / bucketTime
+	all := w.bucketTime.Nanoseconds()
+	part := all - (time.Now().UnixNano() - w.oldTime)
+	oldSuccess := w.oldBucket.Successes() * part / all
+	oldFailure := w.oldBucket.Failures() * part / all
+	oldTimeout := w.oldBucket.Timeouts() * part / all
 	return w.Successes() + oldSuccess, w.Failures() + oldFailure, w.Timeouts() + oldTimeout
 }
 
@@ -205,7 +205,7 @@ func (w *window) Reset() {
 	atomic.StoreInt64(&w.allFailure, 0)
 	atomic.StoreInt64(&w.allTimeout, 0)
 	w.getBucket().Reset()
-	w.abandonBucket.Reset()
+	w.oldBucket.Reset()
 	w.rw.Unlock() // don't use defer
 }
 
@@ -231,8 +231,8 @@ func (w *window) tick() {
 		w.latest = 0
 	}
 	latestBucket := w.getBucket()
-	w.abandonBucket = *latestBucket
-	w.abandonTime = time.Now().UnixNano()
+	w.oldBucket = *latestBucket
+	w.oldTime = time.Now().UnixNano()
 	latestBucket.Reset()
 	w.rw.Unlock()
 }
