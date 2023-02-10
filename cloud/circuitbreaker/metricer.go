@@ -78,6 +78,9 @@ type window struct {
 
 	errStart int64
 	conseErr int64
+
+	abandonBucket bucket // abandon perPBucket
+	abandonTime   int64  // abandon time
 }
 
 // newWindow .
@@ -140,8 +143,14 @@ func (w *window) Timeout() {
 	b.Timeout()
 }
 
+// Counts count all successes, failures and timeouts
 func (w *window) Counts() (successes, failures, timeouts int64) {
-	return w.Successes(), w.Failures(), w.Timeouts()
+	bucketTime := w.bucketTime.Nanoseconds()
+	duration := bucketTime - (time.Now().UnixNano() - w.abandonTime)
+	oldSuccess := w.abandonBucket.Successes() * duration / bucketTime
+	oldFailure := w.abandonBucket.Failures() * duration / bucketTime
+	oldTimeout := w.abandonBucket.Timeouts() * duration / bucketTime
+	return w.Successes() + oldSuccess, w.Failures() + oldFailure, w.Timeouts() + oldTimeout
 }
 
 // Successes returns the total number of successes recorded in all buckets.
@@ -196,6 +205,7 @@ func (w *window) Reset() {
 	atomic.StoreInt64(&w.allFailure, 0)
 	atomic.StoreInt64(&w.allTimeout, 0)
 	w.getBucket().Reset()
+	w.abandonBucket.Reset()
 	w.rw.Unlock() // don't use defer
 }
 
@@ -220,7 +230,10 @@ func (w *window) tick() {
 	if w.latest >= w.bucketNums {
 		w.latest = 0
 	}
-	w.getBucket().Reset()
+	latestBucket := w.getBucket()
+	w.abandonBucket = *latestBucket
+	w.abandonTime = time.Now().UnixNano()
+	latestBucket.Reset()
 	w.rw.Unlock()
 }
 
